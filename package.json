@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "esbuild nakama/modules/main.ts --bundle --platform=neutral --outfile=dist/index.js --format=esm",
+    "build": "esbuild nakama/modules/main.ts --bundle --platform=neutral --outfile=dist/index.js --format=esm && npm run build --prefix public",
     "test": "jest",
     "typecheck": "tsc --noEmit"
   },

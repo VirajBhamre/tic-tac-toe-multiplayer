@@ -75,12 +75,15 @@ Run the dev server:
 npm run dev
 ```
 
-Production build of the SPA:
+Production build of the SPA is written to **`web-dist/`** at the repo root (Nakama stays in **`dist/index.js`**). From the repo root:
 
 ```bash
-npm run build
-npm run preview   # optional local preview
+cd public && npm install   # once, for client dependencies
+cd ..
+npm run build              # Nakama bundle + Vite SPA → dist/ + web-dist/
 ```
+
+To build only the client from `public/`: `npm run build` (same `web-dist/` output). Optional preview: `cd public && npm run preview`.
 
 ### 6. Typecheck and unit tests (root)
 
@@ -137,7 +140,7 @@ All custom HTTP entry points are **Nakama RPCs** registered in `nakama/modules/m
 1. **PostgreSQL** — managed or containerized; create DB and user matching `NAKAMA_DATABASE_ADDRESS`.
 2. **Nakama** — official image (this repo pins `heroiclabs/nakama:3.37.0` in `docker-compose.yml`; align versions in production).
 3. **Runtime bundle** — run `npm ci && npm run build` in CI/CD; deploy the resulting `dist/` (or bake into an image that copies `dist` to the path Nakama’s `--runtime.path` expects).
-4. **Web client** — build `public/` (`npm run build`) and host the static output behind HTTPS; set `VITE_*` at **build time** (Vite inlines them).
+4. **Web client** — build from repo root (`npm run build`) or `public/`; static output is **`web-dist/`** at the repo root. Host that folder behind HTTPS; set `VITE_*` at **build time** (Vite inlines them).
 
 ### Docker Compose–style startup (reference)
 
@@ -238,7 +241,7 @@ Point `VITE_NAKAMA_HOST` at the host reachable from the device (not `localhost` 
 
 ### Troubleshooting quick checks
 
-- Empty or stale **`dist/`** — run `npm run build` at the repo root.  
+- Empty or stale **`dist/`** (Nakama) or **`web-dist/`** (SPA) — run `npm run build` at the repo root (with `public/node_modules` installed).  
 - Client **401 / connection errors** — server key, HTTP key, host, port, and SSL flag must match the running Nakama.  
 - **`username_onboarding_required`** — finish profile setup via the UI RPCs before match actions.
 
@@ -252,5 +255,6 @@ nakama/match/       # Match handler, gameLogic, post-game commit, types
 nakama/lib/         # Storage / SQL helpers for profile, stats, leaderboard
 public/src/         # React app, Nakama client, hooks, RPC wrappers
 tests/              # Jest tests for pure logic
-dist/               # Generated Nakama bundle (gitignored — build output)
+dist/               # Generated Nakama runtime bundle (gitignored — build output)
+web-dist/           # Generated SPA (Vite); build from root or public/
 ```
