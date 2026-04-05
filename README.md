@@ -4,6 +4,36 @@ Real-time, server-authoritative tic-tac-toe built with [Nakama](https://heroicla
 
 ---
 
+## For reviewers (LILA assignment)
+
+### Live deployment
+
+| Deliverable | URL / endpoint |
+|-------------|----------------|
+| **Web app (public)** | [https://tic-tac-toe-multiplayer-phi.vercel.app/](https://tic-tac-toe-multiplayer-phi.vercel.app/) |
+| **Nakama API (deployed)** | Host: `tic-tac-toe-multiplayer-w6l6.onrender.com`, port **443**, **HTTPS/WSS** (`VITE_NAKAMA_USE_SSL=true`). The production client is built against this host (see `public/.env.production`). |
+
+Open the Vercel URL in two browsers (or one normal + one private window), register two accounts, complete username onboarding if prompted, then use **Casual** (create/join lobby) or **Ranked** (same mode) to verify real-time play.
+
+### Requirements coverage (summary)
+
+| Area | How it is addressed |
+|------|---------------------|
+| **Frontend** | React + Vite SPA (`public/`), responsive layout, live match state via Nakama realtime. |
+| **Server-authoritative logic** | All moves validated and applied in the match handler; pure rules in `nakama/match/gameLogic.ts`; state broadcast to clients (see [Architecture](#architecture-and-design-decisions)). |
+| **Matchmaking & rooms** | Ranked: Nakama matchmaker + `matchmakerMatched`. Casual: `createMatch` / `joinMatch` / `listOpenMatches`. Disconnects handled in match loop. |
+| **Deployment** | Frontend on **Vercel**; Nakama + Postgres on **Render** (Docker). Details: [Deployment](#deployment-process-documentation). |
+| **Bonus: concurrent games** | Isolation per Nakama match instance; multiple open/ranked sessions supported. |
+| **Bonus: leaderboard / stats** | Elo-style rating, wins/losses/streaks, global leaderboard RPCs + UI. |
+| **Bonus: timed mode** | Per-move timeout, forfeit on timeout, classic vs timed in matchmaking and UI. |
+
+### Repository deliverables
+
+- **Source:** this repo (root + `public/`, `nakama/`, `tests/`).
+- **README:** setup, architecture, deployment, API/config, and multiplayer testing — sections below.
+
+---
+
 ## Setup and installation
 
 ### Prerequisites
@@ -135,6 +165,13 @@ All custom HTTP entry points are **Nakama RPCs** registered in `nakama/modules/m
 
 ## Deployment process documentation
 
+### This submission’s production stack
+
+- **Frontend:** Static SPA from `web-dist/` (build via root `npm run build` with `public/.env.production`) deployed to **Vercel** — live at [https://tic-tac-toe-multiplayer-phi.vercel.app/](https://tic-tac-toe-multiplayer-phi.vercel.app/).
+- **Backend:** Nakama official Docker image on **Render**, with PostgreSQL and the bundled runtime from `dist/index.js`; public API/WebSocket on **443** with TLS. Client env vars for that host are in `public/.env.production` (build-time `VITE_*`).
+
+For a fresh deployment, repeat the steps under [Typical production layout](#typical-production-layout) on your own infrastructure and rebuild the client with matching `VITE_NAKAMA_*` values.
+
 ### Typical production layout
 
 1. **PostgreSQL** — managed or containerized; create DB and user matching `NAKAMA_DATABASE_ADDRESS`.
@@ -210,6 +247,13 @@ Match module name: **`tic_tac_toe`** (`nakama/match/constants.ts`). Tick rate: *
 ---
 
 ## How to test the multiplayer functionality
+
+### Quick check on the deployed app (no local setup)
+
+1. Open [https://tic-tac-toe-multiplayer-phi.vercel.app/](https://tic-tac-toe-multiplayer-phi.vercel.app/) in two separate sessions (e.g. Chrome + Firefox, or normal + incognito).
+2. Register/sign in as two different users; complete username onboarding if the UI asks.
+3. Start a **Casual** match from one side and join from the other, or queue **Ranked** with the same mode on both.
+4. Play a few moves and confirm both clients stay in sync; try an invalid move (occupied cell or wrong turn) and confirm the server rejects it.
 
 ### Automated tests (game logic)
 
