@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Session } from "@heroiclabs/nakama-js";
-import type { Socket } from "@heroiclabs/nakama-js";
+import {
+  Session,
+  WebSocketAdapterText,
+} from "@heroiclabs/nakama-js";
+import type { Client, Socket } from "@heroiclabs/nakama-js";
 import { OP_MOVE, OP_REJECT, OP_STATE } from "../constants/matchProtocol";
 import {
   clearPersistedSession,
@@ -32,6 +35,27 @@ import {
 } from "../types/serverGame";
 
 const MATCH_STORAGE_KEY = "ttt_active_match_id";
+
+/** Longer heartbeat reduces false disconnects on mobile / background tabs (nakama-js default 10s). */
+const NAKAMA_HEARTBEAT_MS = 60_000;
+const NAKAMA_SEND_TIMEOUT_MS = 30_000;
+const AUTO_RECONNECT_DELAYS_MS = [250, 1500, 4000] as const;
+
+function createConfiguredSocket(client: Client, useSSL: boolean): Socket {
+  const sock = client.createSocket(
+    useSSL,
+    false,
+    new WebSocketAdapterText(),
+    NAKAMA_SEND_TIMEOUT_MS
+  );
+  sock.setHeartbeatTimeoutMs(NAKAMA_HEARTBEAT_MS);
+  sock.onheartbeattimeout = () => {
+    if (import.meta.env.DEV) {
+      console.warn("Nakama socket heartbeat timeout");
+    }
+  };
+  return sock;
+}
 
 export type ConnectionState =
   | "unauthenticated"
@@ -131,6 +155,18 @@ export function useTicTacToeGame(): UseTicTacToeGame {
   const sessionRef = useRef<Session | null>(null);
   const moveSeqRef = useRef(0);
   const mmTicketRef = useRef<string | null>(null);
+  const socketGenRef = useRef(0);
+  const snapshotRef = useRef<ServerGameSnapshot | null>(null);
+  const connectionRef = useRef<ConnectionState>("authenticating");
+  const userInitiatedSocketCloseRef = useRef(false);
+  const autoReconnectTokenRef = useRef<object | null>(null);
+  const autoReconnectTimersRef = useRef<number[]>([]);
+  const attachSocketHandlersRef = useRef<
+    (sock: Socket, mid: string, disconnectGen: number) => void
+  >(() => {});
+  const openSocketAndJoinRef = useRef<
+    (sess: Session, mid: string) => Promise<void>
+  >(async () => {});
 
   useEffect(() => {
     matchIdRef.current = matchId;
@@ -144,7 +180,24 @@ export function useTicTacToeGame(): UseTicTacToeGame {
     leaderboardPageRef.current = leaderboardPage;
   }, [leaderboardPage]);
 
+  useEffect(() => {
+    snapshotRef.current = snapshot;
+  }, [snapshot]);
+
+  useEffect(() => {
+    connectionRef.current = connection;
+  }, [connection]);
+
+  const clearAutoReconnectScheduling = useCallback(() => {
+    for (const id of autoReconnectTimersRef.current) {
+      window.clearTimeout(id);
+    }
+    autoReconnectTimersRef.current = [];
+    autoReconnectTokenRef.current = null;
+  }, []);
+
   const tearDownSocket = useCallback(() => {
+    socketGenRef.current += 1;
     const s = socketRef.current;
     socketRef.current = null;
     mmTicketRef.current = null;
@@ -157,68 +210,205 @@ export function useTicTacToeGame(): UseTicTacToeGame {
     }
   }, []);
 
-  const attachSocketHandlers = useCallback((sock: Socket, mid: string) => {
-    sock.onmatchdata = (md) => {
-      if (md.match_id !== mid) return;
-      const text = new TextDecoder().decode(md.data);
-      if (md.op_code === OP_STATE) {
-        try {
-          const json: unknown = JSON.parse(text);
-          const next = parseServerSnapshot(json);
-          if (next) {
-            setSnapshot(next);
-            const uid = sessionRef.current?.user_id;
-            if (uid && next.eloSummary?.[uid]) {
-              setMyRating(next.eloSummary[uid].after);
+  const attachSocketHandlers = useCallback(
+    (sock: Socket, mid: string, disconnectGen: number) => {
+      sock.onmatchdata = (md) => {
+        if (md.match_id !== mid) return;
+        const text = new TextDecoder().decode(md.data);
+        if (md.op_code === OP_STATE) {
+          try {
+            const json: unknown = JSON.parse(text);
+            const next = parseServerSnapshot(json);
+            if (next) {
+              setSnapshot(next);
+              const uid = sessionRef.current?.user_id;
+              if (uid && next.eloSummary?.[uid]) {
+                setMyRating(next.eloSummary[uid].after);
+              }
             }
+          } catch {
+            setErrorMessage("Invalid state payload from server");
           }
-        } catch {
-          setErrorMessage("Invalid state payload from server");
+          return;
         }
-        return;
-      }
-      if (md.op_code === OP_REJECT) {
-        try {
-          const json = JSON.parse(text) as { reason?: string };
-          setLastRejectReason(json.reason ?? "move_rejected");
-        } catch {
-          setLastRejectReason("move_rejected");
+        if (md.op_code === OP_REJECT) {
+          try {
+            const json = JSON.parse(text) as { reason?: string };
+            setLastRejectReason(json.reason ?? "move_rejected");
+          } catch {
+            setLastRejectReason("move_rejected");
+          }
         }
-      }
-    };
+      };
 
-    sock.ondisconnect = () => {
-      setConnection((c) =>
-        c === "unauthenticated" ||
-        c === "authenticating" ||
-        c === "ready" ||
-        c === "needs_username"
-          ? c
-          : "disconnected"
-      );
-    };
-  }, []);
+      sock.ondisconnect = () => {
+        if (userInitiatedSocketCloseRef.current) {
+          userInitiatedSocketCloseRef.current = false;
+          setConnection((c) =>
+            c === "unauthenticated" ||
+            c === "authenticating" ||
+            c === "ready" ||
+            c === "needs_username"
+              ? c
+              : "disconnected"
+          );
+          return;
+        }
+        if (disconnectGen !== socketGenRef.current) {
+          return;
+        }
+        const midNow = matchIdRef.current;
+        const sessNow = sessionRef.current;
+        const snapNow = snapshotRef.current;
+        const canAutoReconnect =
+          !!midNow &&
+          !!sessNow &&
+          (!snapNow || snapNow.status !== "finished");
 
-  const bindDefaultDisconnect = useCallback((sock: Socket) => {
-    sock.ondisconnect = () => {
-      setConnection((c) =>
-        c === "unauthenticated" ||
-        c === "authenticating" ||
-        c === "ready" ||
-        c === "needs_username"
-          ? c
-          : "disconnected"
-      );
-    };
-  }, []);
+        if (canAutoReconnect) {
+          for (const id of autoReconnectTimersRef.current) {
+            window.clearTimeout(id);
+          }
+          autoReconnectTimersRef.current = [];
+          const token: object = {};
+          autoReconnectTokenRef.current = token;
+          let attempt = 0;
+
+          const runAttempt = (): void => {
+            if (autoReconnectTokenRef.current !== token) {
+              return;
+            }
+            if (attempt >= AUTO_RECONNECT_DELAYS_MS.length) {
+              autoReconnectTokenRef.current = null;
+              setConnection((c) =>
+                c === "unauthenticated" ||
+                c === "authenticating" ||
+                c === "ready" ||
+                c === "needs_username"
+                  ? c
+                  : "disconnected"
+              );
+              setErrorMessage("Lost connection to the game");
+              return;
+            }
+            const delay = AUTO_RECONNECT_DELAYS_MS[attempt];
+            attempt += 1;
+            const tid = window.setTimeout(() => {
+              void (async () => {
+                if (autoReconnectTokenRef.current !== token) {
+                  return;
+                }
+                const s2 = sessionRef.current;
+                const m2 = matchIdRef.current;
+                const sn2 = snapshotRef.current;
+                if (
+                  !s2 ||
+                  !m2 ||
+                  (sn2 && sn2.status === "finished")
+                ) {
+                  autoReconnectTokenRef.current = null;
+                  setConnection((c) =>
+                    c === "unauthenticated" ||
+                    c === "authenticating" ||
+                    c === "ready" ||
+                    c === "needs_username"
+                      ? c
+                      : "disconnected"
+                  );
+                  return;
+                }
+                try {
+                  setConnection("joining");
+                  setErrorMessage(null);
+                  tearDownSocket();
+                  const disconnectGen = socketGenRef.current;
+                  const { useSSL } = getNakamaConfig();
+                  const freshSock = createConfiguredSocket(client, useSSL);
+                  socketRef.current = freshSock;
+                  moveSeqRef.current = 0;
+                  attachSocketHandlersRef.current(
+                    freshSock,
+                    m2,
+                    disconnectGen
+                  );
+                  await freshSock.connect(s2, true);
+                  await freshSock.joinMatch(m2, undefined, {});
+                  setMatchId(m2);
+                  matchIdRef.current = m2;
+                  writeStoredMatchId(m2);
+                  setConnection("in_match");
+                  clearAutoReconnectScheduling();
+                } catch (e) {
+                  autoReconnectTokenRef.current = token;
+                  setErrorMessage(
+                    e instanceof Error ? e.message : "Reconnection failed"
+                  );
+                  runAttempt();
+                }
+              })();
+            }, delay);
+            autoReconnectTimersRef.current.push(tid);
+          };
+
+          runAttempt();
+          return;
+        }
+
+        setConnection((c) =>
+          c === "unauthenticated" ||
+          c === "authenticating" ||
+          c === "ready" ||
+          c === "needs_username"
+            ? c
+            : "disconnected"
+        );
+      };
+    },
+    [client, tearDownSocket, clearAutoReconnectScheduling]
+  );
+
+  attachSocketHandlersRef.current = attachSocketHandlers;
+
+  const bindDefaultDisconnect = useCallback(
+    (sock: Socket, disconnectGen: number) => {
+      sock.ondisconnect = () => {
+        if (userInitiatedSocketCloseRef.current) {
+          userInitiatedSocketCloseRef.current = false;
+          setConnection((c) =>
+            c === "unauthenticated" ||
+            c === "authenticating" ||
+            c === "ready" ||
+            c === "needs_username"
+              ? c
+              : "disconnected"
+          );
+          return;
+        }
+        if (disconnectGen !== socketGenRef.current) {
+          return;
+        }
+        setConnection((c) =>
+          c === "unauthenticated" ||
+          c === "authenticating" ||
+          c === "ready" ||
+          c === "needs_username"
+            ? c
+            : "disconnected"
+        );
+      };
+    },
+    []
+  );
 
   const openSocketAndJoin = useCallback(
     async (sess: Session, mid: string) => {
+      clearAutoReconnectScheduling();
       tearDownSocket();
+      const disconnectGen = socketGenRef.current;
       const { useSSL } = getNakamaConfig();
-      const sock = client.createSocket(useSSL, false);
+      const sock = createConfiguredSocket(client, useSSL);
       socketRef.current = sock;
-      attachSocketHandlers(sock, mid);
+      attachSocketHandlers(sock, mid, disconnectGen);
       moveSeqRef.current = 0;
       await sock.connect(sess, true);
       await sock.joinMatch(mid, undefined, {});
@@ -226,8 +416,14 @@ export function useTicTacToeGame(): UseTicTacToeGame {
       matchIdRef.current = mid;
       writeStoredMatchId(mid);
       setConnection("in_match");
+      clearAutoReconnectScheduling();
     },
-    [attachSocketHandlers, client, tearDownSocket]
+    [
+      attachSocketHandlers,
+      clearAutoReconnectScheduling,
+      client,
+      tearDownSocket,
+    ]
   );
 
   const refreshMyRating = useCallback(async () => {
@@ -421,6 +617,8 @@ export function useTicTacToeGame(): UseTicTacToeGame {
   );
 
   const logout = useCallback(() => {
+    userInitiatedSocketCloseRef.current = true;
+    clearAutoReconnectScheduling();
     tearDownSocket();
     clearPersistedSession();
     setSession(null);
@@ -437,7 +635,7 @@ export function useTicTacToeGame(): UseTicTacToeGame {
     writeStoredMatchId(null);
     setErrorMessage(null);
     setConnection("unauthenticated");
-  }, [tearDownSocket]);
+  }, [clearAutoReconnectScheduling, tearDownSocket]);
 
   const createGame = useCallback(
     async (opts?: { mode?: "classic" | "timed" }) => {
@@ -506,6 +704,7 @@ export function useTicTacToeGame(): UseTicTacToeGame {
       setErrorMessage(null);
       setConnection("matchmaking");
       setSnapshot(null);
+      clearAutoReconnectScheduling();
       tearDownSocket();
 
       let rating: number;
@@ -531,21 +730,23 @@ export function useTicTacToeGame(): UseTicTacToeGame {
       const query = `+properties.game:tictactoe +properties.rating:>=${rMin} +properties.rating:<=${rMax} ${modeQuery}`;
 
       const { useSSL } = getNakamaConfig();
-      const sock = client.createSocket(useSSL, false);
+      const disconnectGen = socketGenRef.current;
+      const sock = createConfiguredSocket(client, useSSL);
       socketRef.current = sock;
       moveSeqRef.current = 0;
-      bindDefaultDisconnect(sock);
+      bindDefaultDisconnect(sock, disconnectGen);
 
       sock.onmatchmakermatched = async (mm) => {
         try {
           const mid = mm.match_id;
-          attachSocketHandlers(sock, mid);
+          attachSocketHandlers(sock, mid, disconnectGen);
           await sock.joinMatch(mm.match_id, mm.token, {});
           setMatchId(mid);
           matchIdRef.current = mid;
           writeStoredMatchId(mid);
           mmTicketRef.current = null;
           setConnection("in_match");
+          clearAutoReconnectScheduling();
         } catch (e) {
           tearDownSocket();
           setConnection("ready");
@@ -576,12 +777,15 @@ export function useTicTacToeGame(): UseTicTacToeGame {
     [
       attachSocketHandlers,
       bindDefaultDisconnect,
+      clearAutoReconnectScheduling,
       client,
       tearDownSocket,
     ]
   );
 
   const cancelMatchmaking = useCallback(async () => {
+    userInitiatedSocketCloseRef.current = true;
+    clearAutoReconnectScheduling();
     const ticket = mmTicketRef.current;
     const sock = socketRef.current;
     mmTicketRef.current = null;
@@ -594,7 +798,7 @@ export function useTicTacToeGame(): UseTicTacToeGame {
     }
     tearDownSocket();
     setConnection("ready");
-  }, [tearDownSocket]);
+  }, [clearAutoReconnectScheduling, tearDownSocket]);
 
   const sendMove = useCallback(
     async (index: number) => {
@@ -612,6 +816,8 @@ export function useTicTacToeGame(): UseTicTacToeGame {
   );
 
   const leaveGame = useCallback(async () => {
+    userInitiatedSocketCloseRef.current = true;
+    clearAutoReconnectScheduling();
     const sock = socketRef.current;
     const mid = matchIdRef.current;
     if (sock && mid) {
@@ -630,7 +836,13 @@ export function useTicTacToeGame(): UseTicTacToeGame {
     void refreshMyRating();
     void refreshMyCareer();
     void refreshLeaderboard(0);
-  }, [refreshLeaderboard, refreshMyCareer, refreshMyRating, tearDownSocket]);
+  }, [
+    clearAutoReconnectScheduling,
+    refreshLeaderboard,
+    refreshMyCareer,
+    refreshMyRating,
+    tearDownSocket,
+  ]);
 
   const reconnect = useCallback(async () => {
     const sess = sessionRef.current;
@@ -650,6 +862,29 @@ export function useTicTacToeGame(): UseTicTacToeGame {
       );
     }
   }, [openSocketAndJoin]);
+
+  useEffect(() => {
+    openSocketAndJoinRef.current = openSocketAndJoin;
+  }, [openSocketAndJoin]);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== "visible") return;
+      if (connectionRef.current !== "disconnected") return;
+      const mid = matchIdRef.current;
+      const sess = sessionRef.current;
+      const snap = snapshotRef.current;
+      if (!mid || !sess || (snap && snap.status === "finished")) return;
+      void openSocketAndJoinRef.current(sess, mid).catch((e) => {
+        setConnection("disconnected");
+        setErrorMessage(
+          e instanceof Error ? e.message : "Reconnection failed"
+        );
+      });
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
 
   const resumeStoredMatch = useCallback(async () => {
     const id = readStoredMatchId();
