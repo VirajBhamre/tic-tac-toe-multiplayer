@@ -1,6 +1,7 @@
-# Nakama + bundled TypeScript runtime (same flags as docker-compose.yml).
+# Nakama + bundled TypeScript runtime. nginx on 7350 proxies to Nakama on 7349 and adds CORS
+# (fixes browser preflight when Origin is missing or edge strips upstream CORS headers).
 # Build: docker build -t tic-tac-toe-nakama .
-# Run:  docker run --rm -e NAKAMA_DATABASE_ADDRESS='user:pass@host:5432/db?sslmode=require' -p 7350:7350 ...
+# Run:  docker run --rm -e NAKAMA_DATABASE_ADDRESS='...' -p 7350:7350 -p 7351:7351 ...
 
 FROM node:22-alpine AS builder
 RUN apk add --no-cache git
@@ -17,23 +18,16 @@ RUN npx esbuild nakama/modules/main.ts \
 
 FROM heroiclabs/nakama:3.37.0
 
-COPY --from=builder /app/dist /nakama/data/modules
+USER root
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends nginx \
+  && rm -rf /var/lib/apt/lists/*
 
-RUN cat <<'SCRIPT' > /docker-entrypoint-nakama.sh && chmod +x /docker-entrypoint-nakama.sh
-#!/bin/sh
-set -e
-/nakama/nakama migrate up --database.address "$NAKAMA_DATABASE_ADDRESS"
-exec /nakama/nakama \
-  --name nakama1 \
-  --database.address "$NAKAMA_DATABASE_ADDRESS" \
-  --logger.level INFO \
-  --session.token_expiry_sec 7200 \
-  --runtime.path /nakama/data/modules \
-  --runtime.env "KEEPALIVE_ORIGIN=$KEEPALIVE_ORIGIN" \
-  --runtime.env "KEEPALIVE_HTTP_KEY=$KEEPALIVE_HTTP_KEY" \
-  --runtime.env "KEEPALIVE_INTERVAL_SEC=${KEEPALIVE_INTERVAL_SEC:-300}"
-SCRIPT
+COPY --from=builder /app/dist /nakama/data/modules
+COPY deploy/nakama-proxy.conf /etc/nginx/nginx.conf
+COPY deploy/nakama-entrypoint.sh /nakama-entrypoint.sh
+RUN chmod +x /nakama-entrypoint.sh
 
 EXPOSE 7350 7351
 
-ENTRYPOINT ["/docker-entrypoint-nakama.sh"]
+ENTRYPOINT ["/nakama-entrypoint.sh"]
