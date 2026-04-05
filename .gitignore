@@ -29,7 +29,8 @@ coverage/
 dist-ssr/
 *.local
 
-# IDE
+# IDE / Cursor
+.cursor/
 .vscode/*
 !.vscode/extensions.json
 .idea/
