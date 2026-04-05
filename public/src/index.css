@@ -515,24 +515,12 @@ body {
   color: var(--muted);
 }
 
-.game-status__elo {
-  margin: 0.35rem 0 0;
-  text-align: center;
-  font-size: 0.95rem;
-}
-
 .game-status__timer {
   margin: 0.25rem 0 0;
   text-align: center;
   font-size: 1.05rem;
   font-weight: 600;
   color: var(--warn);
-}
-
-.game-status__end-reason {
-  margin: 0.35rem 0 0;
-  text-align: center;
-  font-size: 0.9rem;
 }
 
 .lobby__mode-row {
@@ -829,6 +817,98 @@ body {
   flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: center;
+}
+
+.game-result-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  pointer-events: none;
+}
+
+.game-result-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.88);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+.game-result-modal__panel {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: min(420px, 100%);
+  padding: 2rem 1.75rem 1.75rem;
+  text-align: center;
+  border-radius: calc(var(--radius) + 6px);
+  background: linear-gradient(165deg, var(--surface) 0%, var(--surface2) 100%);
+  border: 1px solid rgba(0, 245, 212, 0.18);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.2),
+    0 24px 64px rgba(0, 0, 0, 0.45),
+    0 0 80px rgba(0, 245, 212, 0.06);
+  pointer-events: auto;
+}
+
+.game-result-modal__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 8vw, 2.75rem);
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.game-result-modal__title--win {
+  color: #5eead4;
+  text-shadow: 0 0 40px rgba(0, 245, 212, 0.35);
+}
+
+.game-result-modal__title--loss {
+  color: var(--muted);
+}
+
+.game-result-modal__title--draw {
+  color: var(--text);
+}
+
+.game-result-modal__reason {
+  margin: 1rem 0 0;
+  font-size: 1rem;
+}
+
+.game-result-modal__elo {
+  margin: 0.85rem 0 0;
+  font-size: 1.05rem;
+  color: var(--muted);
+}
+
+.game-result-modal__countdown {
+  margin: 1.35rem 0 0;
+  font-size: 0.95rem;
+}
+
+.game-result-modal__actions {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.game-result-modal__leave {
+  width: 100%;
+  min-height: 48px;
+  font-weight: 600;
+}
+
+.game-result-modal__copy {
+  width: 100%;
 }
 
 .profile-modal {

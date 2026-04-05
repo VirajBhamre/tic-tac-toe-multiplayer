@@ -62,37 +62,8 @@ export function GameStatus({ snapshot, myUserId, matchId }: GameStatusProps) {
         ? "Your turn"
         : "Opponent's turn";
   }
-  if (snapshot.status === "finished") {
-    if (snapshot.winner && snapshot.winner === myUserId) {
-      headline = "You won";
-    } else if (snapshot.winner) {
-      headline = "You lost";
-    } else {
-      headline = "Draw";
-    }
-  }
 
   const shortId = matchId.length > 12 ? `${matchId.slice(0, 8)}…` : matchId;
-
-  const eloLine =
-    snapshot.status === "finished" &&
-    myUserId &&
-    snapshot.eloSummary?.[myUserId]
-      ? (() => {
-          const { before, after } = snapshot.eloSummary[myUserId];
-          const delta = after - before;
-          const sign = delta > 0 ? "+" : "";
-          return `Elo ${before} → ${after} (${sign}${delta})`;
-        })()
-      : null;
-
-  const endReasonLine =
-    snapshot.status === "finished" && snapshot.endReason === "timeout"
-      ? "Decided by move timeout."
-      : snapshot.status === "finished" &&
-          snapshot.endReason === "disconnect"
-        ? "Opponent disconnected."
-        : null;
 
   const timerLine =
     snapshot.gameMode === "timed" &&
@@ -108,12 +79,6 @@ export function GameStatus({ snapshot, myUserId, matchId }: GameStatusProps) {
         <p className="game-status__timer" aria-live="polite">
           {timerLine}
         </p>
-      ) : null}
-      {endReasonLine ? (
-        <p className="game-status__end-reason muted">{endReasonLine}</p>
-      ) : null}
-      {eloLine ? (
-        <p className="game-status__elo muted">{eloLine}</p>
       ) : null}
       <dl className="game-status__meta">
         <div>

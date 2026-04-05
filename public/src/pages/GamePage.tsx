@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { UseTicTacToeGame } from "../hooks/useTicTacToeGame";
 import { GameBoard } from "../components/GameBoard";
+import { GameResultModal } from "../components/GameResultModal";
 import { GameStatus } from "../components/GameStatus";
 import { PlayerStrip } from "../components/PlayerStrip";
 import { RejectToast } from "../components/RejectToast";
@@ -69,12 +70,14 @@ export function GamePage({ game }: GamePageProps) {
         reason={game.lastRejectReason}
         onDismiss={game.clearRejectToast}
       />
-      {snapshot.status === "finished" &&
-      postMatchSecondsLeft !== null &&
-      postMatchSecondsLeft > 0 ? (
-        <p className="muted game-page__auto-leave" role="status">
-          Returning to lobby in {postMatchSecondsLeft}s… (or leave now)
-        </p>
+      {snapshot.status === "finished" ? (
+        <GameResultModal
+          snapshot={snapshot}
+          myUserId={myUserId}
+          matchId={matchId}
+          postMatchSecondsLeft={postMatchSecondsLeft}
+          onLeaveNow={() => void game.leaveGame()}
+        />
       ) : null}
       <div className="game-page__actions">
         <button type="button" className="btn btn--ghost" onClick={() => void game.leaveGame()}>
