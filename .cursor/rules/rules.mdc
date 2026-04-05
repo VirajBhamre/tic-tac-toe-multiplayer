@@ -1,0 +1,202 @@
+---
+alwaysApply: true
+---
+
+project:
+  name: nakama-multiplayer-tic-tac-toe
+  description: >
+    Production-ready multiplayer Tic-Tac-Toe using Nakama with server-authoritative architecture.
+    Backend must be clean, minimal, testable, and aligned with real-time multiplayer best practices.
+
+primary_stack:
+  backend:
+    platform: Nakama
+    runtime: TypeScript
+  testing:
+    framework: Jest
+  infrastructure:
+    containerization: Docker
+
+hard_constraints:
+  - DO NOT introduce any external backend frameworks (e.g., Express, Spring Boot)
+  - DO NOT create REST APIs outside Nakama RPC system
+  - DO NOT use external databases directly (use Nakama storage only)
+  - DO NOT move game logic to frontend
+  - DO NOT overengineer (no CQRS, no DDD, no microservices)
+
+architecture_rules:
+  - Enforce server-authoritative architecture strictly
+  - Server is the only source of truth
+  - All game state mutations must occur inside Nakama match handler
+  - Client input must always be validated on server
+  - All updates must be broadcast from server to clients
+  - Design for clarity, not abstraction
+  - All core game logic must be extracted into pure functions (for testability)
+
+nakama_backend_design:
+  structure:
+    - /nakama
+    - /nakama/modules
+    - /nakama/match
+    - /nakama/match/gameLogic.ts
+    - /tests
+
+  match_handler:
+    file: /nakama/match/tictactoe.ts
+
+    rules:
+      - Keep match handler thin
+      - Delegate logic to gameLogic.ts
+      - No complex logic inside matchLoop
+
+    required_functions:
+      - matchInit
+      - matchJoin
+      - matchLeave
+      - matchLoop
+      - matchTerminate
+
+    responsibilities:
+      - Maintain game state
+      - Call validation + logic functions
+      - Broadcast state updates
+      - Handle player presence
+
+  rpc_layer:
+    file: /nakama/modules/rpc.ts
+
+    allowed_functions:
+      - createMatch
+      - joinMatch
+      - findMatch (optional)
+
+    rules:
+      - Keep RPCs thin
+      - No game logic inside RPCs
+
+game_logic_layer:
+  file: /nakama/match/gameLogic.ts
+
+  required_functions:
+    - createInitialState()
+    - validateMove(state, move, playerId)
+    - applyMove(state, move, playerId)
+    - checkWinner(board)
+    - checkDraw(board)
+
+  rules:
+    - Must be pure functions (no side effects)
+    - Must not depend on Nakama runtime
+    - Must be fully unit testable
+    - Must handle all edge cases explicitly
+
+game_state_model:
+  board:
+    type: array
+    size: 9
+    values: [null, "X", "O"]
+
+  state_fields:
+    - players: [{ userId, symbol }]
+    - currentTurn: string
+    - status: "waiting" | "playing" | "finished"
+    - winner: string | null
+    - moveCount: number
+
+validation_rules:
+  - Reject moves if game is not "playing"
+  - Reject moves if not player's turn
+  - Reject moves on occupied cells
+  - Reject invalid indices
+  - Reject duplicate or replayed moves
+  - Ensure idempotency
+
+real_time_flow:
+  - Client sends move → matchLoop
+  - matchLoop calls validateMove()
+  - If valid → applyMove()
+  - Check winner/draw
+  - Update state
+  - Broadcast state
+
+edge_case_handling:
+  - Player disconnect mid-game
+  - Duplicate move requests
+  - Out-of-turn moves
+  - Invalid board index
+  - Game already finished
+  - Multiple joins beyond limit
+
+testing_rules:
+  structure:
+    - /tests/gameLogic.test.ts
+
+  coverage_requirements:
+    - validateMove must be fully tested
+    - applyMove must be fully tested
+    - checkWinner must cover all win combinations
+    - checkDraw must be tested
+
+  required_test_cases:
+    validateMove:
+      - valid move
+      - move on occupied cell
+      - wrong player's turn
+      - invalid index
+      - game already finished
+
+    applyMove:
+      - correct state update
+      - moveCount increment
+      - turn switch
+
+    checkWinner:
+      - all row wins
+      - all column wins
+      - diagonal wins
+      - no winner case
+
+    checkDraw:
+      - full board with no winner
+      - partial board (not draw)
+
+  rules:
+    - Use Jest
+    - Tests must be deterministic
+    - No dependency on Nakama runtime
+    - Avoid mocking unless necessary
+    - Focus on logic correctness
+
+docker_setup:
+  requirements:
+    - Use official Nakama Docker image
+    - Use docker-compose
+
+  services:
+    - nakama
+    - postgres
+
+  rules:
+    - Expose ports 7350 and 7351
+    - Ensure Nakama connects to Postgres
+    - Support local run with `docker-compose up`
+
+deployment_guidelines:
+  - Backend must run via Docker without errors
+  - Environment variables must be configurable
+  - No hardcoded localhost URLs
+  - WebSocket endpoint must be accessible
+
+anti_patterns:
+  - Writing logic inside matchLoop directly
+  - Skipping test coverage
+  - Testing Nakama runtime instead of logic
+  - Adding unnecessary abstraction layers
+  - Overcomplicating simple functions
+
+success_criteria:
+  - Game runs correctly in real-time
+  - No invalid moves accepted
+  - State remains consistent across clients
+  - Logic is fully tested with Jest
+  - Backend runs via Docker successfully
