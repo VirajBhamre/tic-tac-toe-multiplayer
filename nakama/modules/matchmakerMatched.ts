@@ -1,6 +1,6 @@
 /// <reference types="nakama-runtime" />
 
-import { MATCH_MODULE_NAME } from "../match/tictactoe";
+import { MATCH_MODULE_NAME } from "../match/constants";
 
 /**
  * Creates an authoritative match when the Nakama matchmaker pairs players.

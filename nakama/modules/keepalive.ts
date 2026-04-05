@@ -1,21 +1,6 @@
 /// <reference types="nakama-runtime" />
 
 /**
- * Lightweight RPC for uptime monitors (e.g. Render free tier) and optional self-ping.
- * Call over HTTP: POST /v2/rpc/ping?http_key=...&unwrap= with body "{}".
- */
-export function ping(
-  _ctx: nkruntime.Context,
-  _logger: nkruntime.Logger,
-  _nk: nkruntime.Nakama,
-  _payload: string
-): string {
-  return JSON.stringify({ ok: true });
-}
-
-const MIN_INTERVAL_SEC = 60;
-
-/**
  * If KEEPALIVE_ORIGIN + KEEPALIVE_HTTP_KEY are set in Nakama runtime env (see docker-compose),
  * periodically POSTs to this server's ping RPC so the host sees inbound traffic (e.g. Render).
  * Requires setInterval in the JS runtime; if missing, log and rely on an external pinger to /v2/rpc/ping.
@@ -28,7 +13,7 @@ export function installHostingKeepalive(
   const origin = (env["KEEPALIVE_ORIGIN"] || "").trim().replace(/\/$/, "");
   const httpKey = (env["KEEPALIVE_HTTP_KEY"] || "").trim();
   const intervalSec = Math.max(
-    MIN_INTERVAL_SEC,
+    60,
     parseInt(env["KEEPALIVE_INTERVAL_SEC"] || "300", 10) || 300
   );
 

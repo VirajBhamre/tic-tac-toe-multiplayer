@@ -1,8 +1,7 @@
 /// <reference types="nakama-runtime" />
 
+import { LEADERBOARD_WINS_ID, MATCH_MODULE_NAME } from "../match/constants";
 import {
-  LEADERBOARD_WINS_ID,
-  MATCH_MODULE_NAME,
   TicMatchState,
   matchInit,
   matchJoin,
@@ -12,22 +11,21 @@ import {
   matchSignal,
   matchTerminate,
 } from "../match/tictactoe";
+import { installHostingKeepalive } from "./keepalive";
 import { matchmakerMatched } from "./matchmakerMatched";
 import {
   changePassword,
   checkUsernameAvailable,
-  getProfileStatus,
-  setUsernameAndOnboard,
-  signInWithIdentifier,
-} from "./authRpc";
-import { installHostingKeepalive, ping } from "./keepalive";
-import {
   createMatch,
   getLeaderboard,
   getMyStats,
+  getProfileStatus,
   getRating,
   joinMatch,
   listOpenMatches,
+  ping,
+  setUsernameAndOnboard,
+  signInWithIdentifier,
 } from "./rpc";
 
 function InitModule(
